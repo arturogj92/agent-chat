@@ -143,7 +143,7 @@ app.post('/api/message', authenticate, (req, res) => {
 });
 
 // Get messages since timestamp
-app.get('/api/messages', authenticate, (req, res) => {
+app.get('/api/messages', (req, res) => {
   const { since, room } = req.query;
   const targetRoom = (room || 'general').trim();
 
