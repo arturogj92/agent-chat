@@ -7,7 +7,12 @@ const SERVER_URL = (process.env.SERVER_URL || "http://localhost:3500").replace(/
 const AGENT_KEY = process.env.AGENT_KEY || "";
 const AGENT_NAME = process.env.AGENT_NAME || "unnamed-agent";
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL, 10) || 10000;
-const WEBHOOK_URL = process.env.WEBHOOK_URL || "";
+
+// AI Responder config
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || `You are ${AGENT_NAME}, an AI agent in a multi-agent chat. Be helpful, concise, and friendly. Respond naturally as if chatting with other AI agents.`;
+const MODEL = process.env.MODEL || "claude-sonnet-4-20250514";
 
 let lastTimestamp = new Date().toISOString();
 
@@ -34,7 +39,6 @@ async function sendMessage(content, room = "general") {
 async function fetchAllMessages() {
   const res = await fetch(`${SERVER_URL}/api/messages/all?since=${encodeURIComponent(lastTimestamp)}`, { headers });
   if (!res.ok) {
-    // Fallback to room-specific endpoint
     const res2 = await fetch(`${SERVER_URL}/api/messages?since=${encodeURIComponent(lastTimestamp)}`, { headers });
     if (!res2.ok) throw new Error(`Fetch failed: ${res2.status}`);
     const data = await res2.json();
@@ -57,53 +61,106 @@ async function registerAgent(name, description = "") {
   return res.json();
 }
 
-// ─── Webhook Handler ────────────────────────────────────
-// Posts message to webhook. If webhook returns a JSON response
-// with a "reply" field, automatically sends that as a reply.
+// ─── AI Responder ───────────────────────────────────────
 
-async function handleNewMessage(msg) {
-  if (!WEBHOOK_URL) return;
+async function generateReply(msg) {
+  // Only respond if mentioned or in a conversation
+  const mentionsMe = msg.content.toLowerCase().includes(AGENT_NAME.toLowerCase()) ||
+                     msg.content.toLowerCase().includes("@" + AGENT_NAME.toLowerCase());
+  
+  if (!mentionsMe) return null; // Don't respond if not mentioned
 
+  if (ANTHROPIC_API_KEY) {
+    return await callAnthropic(msg);
+  } else if (OPENAI_API_KEY) {
+    return await callOpenAI(msg);
+  }
+  return null;
+}
+
+async function callAnthropic(msg) {
   try {
-    const res = await fetch(WEBHOOK_URL, {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
       body: JSON.stringify({
-        from: msg.agentName,
-        content: msg.content,
-        room: msg.room,
-        timestamp: msg.timestamp,
-        messageId: msg.id,
+        model: MODEL,
+        max_tokens: 500,
+        system: SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: `[Agent Chat - #${msg.room}] ${msg.agentName} says: ${msg.content}\n\nRespond naturally and concisely.`
+        }],
       }),
     });
-
-    if (res.ok) {
-      const body = await res.json().catch(() => null);
-      // If webhook returns a reply, send it automatically
-      if (body && body.reply) {
-        console.log(`[reply → #${msg.room}] ${body.reply.substring(0, 80)}...`);
-        await sendMessage(body.reply, msg.room);
-      }
-    } else {
-      console.error(`[webhook] Error: ${res.status}`);
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`[ai] Anthropic error: ${res.status} ${err.substring(0, 200)}`);
+      return null;
     }
+    const data = await res.json();
+    return data.content?.[0]?.text || null;
   } catch (err) {
-    console.error(`[webhook] ${err.message}`);
+    console.error(`[ai] Anthropic error: ${err.message}`);
+    return null;
   }
 }
 
-// ─── Poll Loop (MAIN ENTRY POINT) ──────────────────────
+async function callOpenAI(msg) {
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        max_tokens: 500,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: `[Agent Chat - #${msg.room}] ${msg.agentName} says: ${msg.content}\n\nRespond naturally and concisely.` },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`[ai] OpenAI error: ${res.status} ${err.substring(0, 200)}`);
+      return null;
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || null;
+  } catch (err) {
+    console.error(`[ai] OpenAI error: ${err.message}`);
+    return null;
+  }
+}
+
+// ─── Poll Loop ──────────────────────────────────────────
 
 async function pollLoop() {
+  const hasAI = !!(ANTHROPIC_API_KEY || OPENAI_API_KEY);
+  
   console.log("╔═══════════════════════════════════════════════╗");
   console.log("║         Agent Chat Client - Running           ║");
   console.log("╠═══════════════════════════════════════════════╣");
-  console.log(`║ Agent:    ${AGENT_NAME.padEnd(36)}║`);
-  console.log(`║ Server:   ${SERVER_URL.padEnd(36)}║`);
-  console.log(`║ Polling:  every ${(POLL_INTERVAL / 1000 + "s, all rooms").padEnd(30)}║`);
-  console.log(`║ Webhook:  ${(WEBHOOK_URL || "none (log only)").substring(0, 36).padEnd(36)}║`);
+  console.log(`║ Agent:      ${AGENT_NAME.padEnd(34)}║`);
+  console.log(`║ Server:     ${SERVER_URL.padEnd(34)}║`);
+  console.log(`║ Polling:    every ${(POLL_INTERVAL / 1000 + "s, all rooms").padEnd(28)}║`);
+  console.log(`║ AI Reply:   ${(hasAI ? "✅ enabled (responds to mentions)" : "❌ no API key").padEnd(34)}║`);
+  console.log(`║ Model:      ${(hasAI ? MODEL : "n/a").padEnd(34)}║`);
   console.log("╚═══════════════════════════════════════════════╝");
   console.log("");
+
+  if (!hasAI) {
+    console.log("⚠️  No ANTHROPIC_API_KEY or OPENAI_API_KEY set in .env");
+    console.log("⚠️  Messages will be logged but agent won't auto-reply");
+    console.log("");
+  }
 
   let errorCount = 0;
 
@@ -118,11 +175,20 @@ async function pollLoop() {
         for (const msg of newFromOthers) {
           const ts = (msg.timestamp || "").split(" ")[1] || msg.timestamp;
           console.log(`[${ts}] #${msg.room} ${msg.agentName}: ${msg.content}`);
-          await handleNewMessage(msg);
+
+          // Try to generate and send a reply
+          const reply = await generateReply(msg);
+          if (reply) {
+            console.log(`[reply → #${msg.room}] ${reply.substring(0, 80)}${reply.length > 80 ? "..." : ""}`);
+            try {
+              await sendMessage(reply, msg.room);
+            } catch (sendErr) {
+              console.error(`[send error] ${sendErr.message}`);
+            }
+          }
         }
       }
 
-      // Update lastTimestamp from ALL messages (including ours)
       for (const msg of messages) {
         if (msg.timestamp > lastTimestamp) {
           lastTimestamp = msg.timestamp;
@@ -134,7 +200,7 @@ async function pollLoop() {
         console.error(`[poll error #${errorCount}] ${err.message}`);
       }
       if (errorCount > 100) {
-        console.error("[fatal] Too many consecutive errors. Exiting.");
+        console.error("[fatal] Too many errors. Exiting.");
         process.exit(1);
       }
     }
@@ -143,9 +209,8 @@ async function pollLoop() {
   await poll();
   setInterval(poll, POLL_INTERVAL);
 
-  // Heartbeat log every 5 min
   setInterval(() => {
-    console.log(`[heartbeat] ${new Date().toISOString()} - polling active, last: ${lastTimestamp}`);
+    console.log(`[heartbeat] ${new Date().toISOString()} - active, last: ${lastTimestamp}`);
   }, 5 * 60 * 1000);
 }
 
@@ -161,8 +226,8 @@ async function testMode() {
   }
 
   try {
-    await sendMessage(`Hello from ${AGENT_NAME}! (test at ${new Date().toISOString()})`, "general");
-    console.log("[test] ✅ Message sent to #general");
+    await sendMessage(`Hello from ${AGENT_NAME}! (test)`, "general");
+    console.log("[test] ✅ Message sent");
   } catch (err) {
     console.error(`[test] ❌ Send failed: ${err.message}`);
     process.exit(1);
@@ -170,15 +235,15 @@ async function testMode() {
 
   try {
     const messages = await fetchAllMessages();
-    console.log(`[test] ✅ Fetched ${messages.length} message(s) from all rooms`);
+    console.log(`[test] ✅ Fetched ${messages.length} message(s)`);
   } catch (err) {
     console.error(`[test] ❌ Fetch failed: ${err.message}`);
   }
 
+  const hasAI = !!(ANTHROPIC_API_KEY || OPENAI_API_KEY);
+  console.log(`[test] AI auto-reply: ${hasAI ? "✅ configured" : "❌ set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env"}`);
   console.log("");
-  console.log("[test] ✅ All good! Now run permanently:");
-  console.log("  pm2 start agent-client.js --name agent-chat");
-  console.log("  pm2 save && pm2 startup");
+  console.log("[test] ✅ Run permanently: pm2 start agent-client.js --name agent-chat && pm2 save");
   process.exit(0);
 }
 
