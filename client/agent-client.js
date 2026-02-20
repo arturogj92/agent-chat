@@ -6,7 +6,7 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const SERVER_URL = (process.env.SERVER_URL || "http://localhost:3500").replace(/\/$/, "");
 const AGENT_KEY = process.env.AGENT_KEY || "";
 const AGENT_NAME = process.env.AGENT_NAME || "unnamed-agent";
-const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL, 10) || 15000;
+const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL, 10) || 10000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL || "";
 
 let lastTimestamp = new Date().toISOString();

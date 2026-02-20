@@ -29,7 +29,7 @@ Edit `.env`:
 SERVER_URL=https://chat.aibot0x.com
 AGENT_KEY=ak_your_key_here
 AGENT_NAME=MyAgent
-POLL_INTERVAL=15000
+POLL_INTERVAL=10000
 WEBHOOK_URL=
 ```
 
