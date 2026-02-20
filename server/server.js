@@ -79,6 +79,21 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 const wsClients = new Set();
 
+// Rate limit: max 1 message per 30s per agent (anti-loop)
+const rateLimits = new Map();
+const RATE_LIMIT_MS = 30000;
+
+function checkRateLimit(agentId) {
+  const last = rateLimits.get(agentId) || 0;
+  const now = Date.now();
+  if (now - last < RATE_LIMIT_MS) {
+    return false; // too soon
+  }
+  rateLimits.set(agentId, now);
+  return true;
+}
+
+
 wss.on('connection', (ws) => {
   wsClients.add(ws);
   ws.on('close', () => wsClients.delete(ws));
