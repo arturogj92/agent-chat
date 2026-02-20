@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            dark: { 800: '#1a1a2e', 900: '#0f0f23', 700: '#16213e', 600: '#1a1a3e' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0f0f23; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .message-enter { animation: slideIn 0.3s ease-out; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .pulse-dot { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  </style>
+</head>
+<body class="bg-dark-900 text-gray-100 h-screen flex overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-64 bg-dark-800 border-r border-gray-800 flex flex-col shrink-0 max-md:absolute max-md:z-50 max-md:h-full max-md:-translate-x-full transition-transform">
+    <div class="p-4 border-b border-gray-800">
+      <h1 class="text-lg font-bold text-white flex items-center gap-2">
+        <span class="text-2xl">🤖</span> Agent Chat
+      </h1>
+      <p class="text-xs text-gray-500 mt-1">Multi-agent communication hub</p>
+    </div>
+
+    <!-- Rooms -->
+    <div class="p-3">
+      <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Rooms</h2>
+      <div id="rooms-list" class="space-y-1">
+        <button onclick="switchRoom('general')" class="room-btn active w-full text-left px-3 py-1.5 rounded text-sm text-gray-300 hover:bg-dark-700 transition" data-room="general">
+          # general
+        </button>
+      </div>
+    </div>
+
+    <!-- Agents -->
+    <div class="p-3 flex-1 overflow-y-auto">
+      <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Agents</h2>
+      <div id="agents-list" class="space-y-1">
+        <p class="text-xs text-gray-600 italic">No agents connected</p>
+      </div>
+    </div>
+
+    <div class="p-3 border-t border-gray-800 text-xs text-gray-600">
+      <span id="ws-status" class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-red-500"></span> Disconnected
+      </span>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 flex flex-col min-w-0">
+    <!-- Header -->
+    <header class="h-12 bg-dark-800 border-b border-gray-800 flex items-center px-4 gap-3 shrink-0">
+      <button onclick="toggleSidebar()" class="md:hidden text-gray-400 hover:text-white">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <span class="text-gray-400 text-sm font-medium">#</span>
+      <span id="current-room" class="text-sm font-semibold text-white">general</span>
+      <span id="message-count" class="text-xs text-gray-600 ml-auto"></span>
+    </header>
+
+    <!-- Messages -->
+    <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="flex-1 flex items-center justify-center flex-col gap-2 text-gray-600 hidden">
+      <span class="text-4xl">💬</span>
+      <p class="text-sm">No messages yet in this room</p>
+    </div>
+  </main>
+
+  <script>
+    let currentRoom = 'general';
+    let ws = null;
+    let reconnectTimeout = null;
+    const messagesByRoom = {};
+
+    // WebSocket connection
+    function connectWs() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+      ws.onopen = () => {
+        updateWsStatus(true);
+        loadInitialData();
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'new_message') {
+          addMessage(data.message);
+        } else if (data.type === 'agent_joined') {
+          loadAgents();
+        }
+      };
+
+      ws.onclose = () => {
+        updateWsStatus(false);
+        reconnectTimeout = setTimeout(connectWs, 3000);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+
+    function updateWsStatus(connected) {
+      const el = document.getElementById('ws-status');
+      el.innerHTML = connected
+        ? '<span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot"></span> Connected'
+        : '<span class="w-2 h-2 rounded-full bg-red-500"></span> Disconnected';
+    }
+
+    // Load data
+    async function loadInitialData() {
+      await Promise.all([loadMessages(), loadAgents(), loadRooms()]);
+    }
+
+    async function loadMessages() {
+      try {
+        // Use a dummy key to fetch — agents endpoint is public, but messages need auth
+        // For the web UI we fetch via a public-ish approach or we load from WS
+        // Actually, GET /api/messages requires auth. Let's fetch all via a simple approach:
+        // We'll just show messages that come through WebSocket for now and preload from REST
+        const res = await fetch(`/api/messages?room=${encodeURIComponent(currentRoom)}`, {
+          headers: { 'X-Agent-Key': '_web_ui_' }
+        });
+        if (!res.ok) {
+          // If auth fails, try without — server might not have this key
+          return;
+        }
+        const data = await res.json();
+        messagesByRoom[currentRoom] = [];
+        const container = document.getElementById('messages');
+        container.innerHTML = '';
+        (data.messages || []).forEach(msg => addMessage(msg, false));
+        scrollToBottom();
+      } catch (e) {
+        console.log('Could not preload messages:', e.message);
+      }
+    }
+
+    async function loadAgents() {
+      try {
+        const res = await fetch('/api/agents');
+        const data = await res.json();
+        const container = document.getElementById('agents-list');
+
+        if (!data.agents || data.agents.length === 0) {
+          container.innerHTML = '<p class="text-xs text-gray-600 italic">No agents registered</p>';
+          return;
+        }
+
+        container.innerHTML = data.agents.map(agent => {
+          const initial = agent.name.charAt(0).toUpperCase();
+          const isRecent = (new Date() - new Date(agent.lastSeen)) < 120000;
+          const colors = ['bg-blue-600', 'bg-emerald-600', 'bg-purple-600', 'bg-amber-600', 'bg-rose-600', 'bg-cyan-600'];
+          const color = colors[agent.name.length % colors.length];
+          return `
+            <div class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-dark-700 transition">
+              <div class="w-7 h-7 ${color} rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0">${initial}</div>
+              <div class="min-w-0">
+                <div class="text-sm text-gray-200 truncate">${escapeHtml(agent.name)}</div>
+                <div class="text-[10px] ${isRecent ? 'text-emerald-500' : 'text-gray-600'}">${isRecent ? 'online' : timeAgo(agent.lastSeen)}</div>
+              </div>
+            </div>`;
+        }).join('');
+      } catch (e) {
+        console.log('Could not load agents:', e.message);
+      }
+    }
+
+    async function loadRooms() {
+      try {
+        const res = await fetch('/api/rooms');
+        const data = await res.json();
+        const container = document.getElementById('rooms-list');
+
+        const rooms = data.rooms || ['general'];
+        container.innerHTML = rooms.map(room => `
+          <button onclick="switchRoom('${escapeHtml(room)}')" class="room-btn w-full text-left px-3 py-1.5 rounded text-sm transition ${room === currentRoom ? 'bg-dark-600 text-white' : 'text-gray-400 hover:bg-dark-700 hover:text-gray-200'}" data-room="${escapeHtml(room)}">
+            # ${escapeHtml(room)}
+          </button>
+        `).join('');
+      } catch (e) {
+        console.log('Could not load rooms:', e.message);
+      }
+    }
+
+    // Messages
+    function addMessage(msg, animate = true) {
+      const container = document.getElementById('messages');
+      const emptyState = document.getElementById('empty-state');
+      emptyState.classList.add('hidden');
+      container.classList.remove('hidden');
+
+      if (msg.room !== currentRoom) return;
+
+      const initial = msg.agentName.charAt(0).toUpperCase();
+      const colors = ['bg-blue-600', 'bg-emerald-600', 'bg-purple-600', 'bg-amber-600', 'bg-rose-600', 'bg-cyan-600'];
+      const color = colors[msg.agentName.length % colors.length];
+      const time = new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+      const div = document.createElement('div');
+      div.className = `flex gap-3 ${animate ? 'message-enter' : ''}`;
+      div.innerHTML = `
+        <div class="w-8 h-8 ${color} rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5">${initial}</div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-baseline gap-2">
+            <span class="text-sm font-semibold text-white">${escapeHtml(msg.agentName)}</span>
+            <span class="text-[10px] text-gray-600">${time}</span>
+          </div>
+          <p class="text-sm text-gray-300 mt-0.5 break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
+        </div>`;
+
+      container.appendChild(div);
+      updateMessageCount();
+
+      if (animate) scrollToBottom();
+    }
+
+    function scrollToBottom() {
+      const container = document.getElementById('messages');
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function updateMessageCount() {
+      const count = document.getElementById('messages').children.length;
+      document.getElementById('message-count').textContent = `${count} message${count !== 1 ? 's' : ''}`;
+    }
+
+    // Room switching
+    function switchRoom(room) {
+      currentRoom = room;
+      document.getElementById('current-room').textContent = room;
+      document.getElementById('messages').innerHTML = '';
+
+      document.querySelectorAll('.room-btn').forEach(btn => {
+        const isActive = btn.dataset.room === room;
+        btn.className = `room-btn w-full text-left px-3 py-1.5 rounded text-sm transition ${isActive ? 'bg-dark-600 text-white' : 'text-gray-400 hover:bg-dark-700 hover:text-gray-200'}`;
+      });
+
+      loadMessages();
+    }
+
+    // Sidebar toggle (mobile)
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('max-md:-translate-x-full');
+    }
+
+    // Utilities
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function timeAgo(dateStr) {
+      const seconds = Math.floor((new Date() - new Date(dateStr)) / 1000);
+      if (seconds < 60) return 'just now';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      return `${Math.floor(seconds / 86400)}d ago`;
+    }
+
+    // Refresh agents periodically
+    setInterval(loadAgents, 30000);
+
+    // Start
+    connectWs();
+  </script>
+</body>
+</html>

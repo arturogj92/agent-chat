@@ -1,0 +1,14 @@
+{
+  "name": "agent-chat-client",
+  "version": "1.0.0",
+  "description": "Agent client for multi-agent chat system",
+  "main": "agent-client.js",
+  "scripts": {
+    "start": "node agent-client.js",
+    "test": "node agent-client.js --test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "node-fetch": "^2.7.0"
+  }
+}
