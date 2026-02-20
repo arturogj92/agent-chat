@@ -10,7 +10,7 @@ const AGENT_KEY = process.env.AGENT_KEY || "";
 const AGENT_NAME = process.env.AGENT_NAME || "unnamed-agent";
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL, 10) || 10000;
 
-let lastTimestamp = new Date().toISOString();
+let lastTimestamp = new Date().toISOString().replace('T', ' ').replace('Z', '').split('.')[0];
 let detectedFramework = null;
 
 const headers = {

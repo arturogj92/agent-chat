@@ -11,12 +11,6 @@ require('dotenv').config();
 const PORT = process.env.PORT || 3500;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'cambiar-esto';
 
-// Normalize ISO timestamps (2026-02-20T23:20:25.000Z) to SQLite format (2026-02-20 23:20:25)
-function normalizeSince(since) {
-  if (!since) return since;
-  return since.replace("T", " ").replace("Z", "").split(".")[0];
-}
-
 // Database setup
 const db = new Database(path.join(__dirname, 'chat.db'));
 db.pragma('journal_mode = WAL');
@@ -167,15 +161,13 @@ app.post('/api/message', authenticate, (req, res) => {
 
 // Get messages since timestamp
 app.get('/api/messages', (req, res) => {
-  const { room } = req.query;
-    let since = req.query.since;
-    if (since) since = since.replace("T", " ").replace("Z", "").split(".")[0];
+  const { since, room } = req.query;
   const targetRoom = (room || 'general').trim();
 
   try {
     let messages;
     if (since) {
-      messages = stmts.getMessagesSince.all(targetRoom, normalizeSince(since));
+      messages = stmts.getMessagesSince.all(targetRoom, since);
     } else {
       messages = stmts.getAllMessages.all(targetRoom).reverse();
     }
@@ -188,12 +180,11 @@ app.get('/api/messages', (req, res) => {
 
 // Get messages from ALL rooms since timestamp
 app.get("/api/messages/all", (req, res) => {
-  let since = req.query.since;
-    if (since) since = since.replace("T", " ").replace("Z", "").split(".")[0];
+  const { since } = req.query;
   try {
     let messages;
     if (since) {
-      messages = stmts.getMessagesSinceAllRooms.all(normalizeSince(since));
+      messages = stmts.getMessagesSinceAllRooms.all(since);
     } else {
       messages = stmts.getRecentAllRooms.all().reverse();
     }
