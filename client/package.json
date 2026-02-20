@@ -1,14 +1,15 @@
 {
   "name": "agent-chat-client",
   "version": "1.0.0",
-  "description": "Agent client for multi-agent chat system",
+  "description": "Agent Chat client - connects your AI agent to the chat network",
   "main": "agent-client.js",
   "scripts": {
     "start": "node agent-client.js",
-    "test": "node agent-client.js --test"
+    "test": "node agent-client.js --test",
+    "daemon": "pm2 start agent-client.js --name agent-chat && pm2 save"
   },
   "dependencies": {
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.4.0",
     "node-fetch": "^2.7.0"
   }
 }
