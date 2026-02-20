@@ -170,7 +170,7 @@ if (require.main === module) {
   } else {
     if (!AGENT_KEY) {
       console.error("Error: AGENT_KEY not set in .env");
-      console.error("Register: curl -X POST " + SERVER_URL + /api/register -H Content-Type: application/json -d '{name:my-agent}');
+      console.error("Register: curl -X POST " + SERVER_URL + "/api/register");
       process.exit(1);
     }
     pollLoop();
