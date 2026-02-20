@@ -55,54 +55,92 @@ async function registerAgent(name, description = "") {
 
 // ─── Framework Auto-Detection ───────────────────────────
 
+// ─── Framework Auto-Detection ───────────────────────────
+
 function detectFramework() {
-  // 1. Check for Moltbot
+  // 0. Manual override via env var (highest priority)
+  if (process.env.FRAMEWORK_URL && process.env.FRAMEWORK_TOKEN) {
+    return {
+      type: process.env.FRAMEWORK_TYPE || "custom",
+      url: process.env.FRAMEWORK_URL,
+      token: process.env.FRAMEWORK_TOKEN,
+    };
+  }
+
+  const homeDir = process.env.HOME || "/home/node";
+  
+  // 1. Check for Moltbot (.env)
   try {
-    const moltbotEnv = [
+    const paths = [
+      path.join(homeDir, ".clawdbot/.env"),
       "/home/node/.clawdbot/.env",
-      path.join(process.env.HOME || "/home/node", ".clawdbot/.env"),
     ];
-    for (const envPath of moltbotEnv) {
-      if (fs.existsSync(envPath)) {
-        const env = fs.readFileSync(envPath, "utf8");
-        const tokenMatch = env.match(/GATEWAY_TOKEN=(.+)/);
-        const portMatch = env.match(/HTTP_PORT=(\d+)/);
-        if (tokenMatch) {
-          return {
-            type: "moltbot",
-            url: `http://127.0.0.1:${portMatch ? portMatch[1] : "18789"}`,
-            token: tokenMatch[1].trim(),
-          };
-        }
+    for (const p of paths) {
+      if (fs.existsSync(p)) {
+        const env = fs.readFileSync(p, "utf8");
+        const token = env.match(/GATEWAY_TOKEN=(.+)/);
+        const port = env.match(/HTTP_PORT=(\d+)/);
+        if (token) return { type: "moltbot", url: `http://127.0.0.1:${port ? port[1] : "18789"}`, token: token[1].trim() };
       }
     }
   } catch (e) {}
 
-  // 2. Check for OpenClaw
+  // 2. Check for OpenClaw (.env or JSON config)
   try {
-    const openclaw = [
+    const envPaths = [
+      path.join(homeDir, ".openclaw/.env"),
       "/home/node/.openclaw/.env",
-      path.join(process.env.HOME || "/home/node", ".openclaw/.env"),
     ];
-    for (const envPath of openclaw) {
-      if (fs.existsSync(envPath)) {
-        const env = fs.readFileSync(envPath, "utf8");
-        const tokenMatch = env.match(/GATEWAY_TOKEN=(.+)/);
-        const portMatch = env.match(/HTTP_PORT=(\d+)/);
-        if (tokenMatch) {
-          return {
-            type: "openclaw",
-            url: `http://127.0.0.1:${portMatch ? portMatch[1] : "18789"}`,
-            token: tokenMatch[1].trim(),
-          };
-        }
+    for (const p of envPaths) {
+      if (fs.existsSync(p)) {
+        const env = fs.readFileSync(p, "utf8");
+        const token = env.match(/GATEWAY_TOKEN=(.+)/);
+        const port = env.match(/HTTP_PORT=(\d+)/);
+        if (token) return { type: "openclaw", url: `http://127.0.0.1:${port ? port[1] : "18789"}`, token: token[1].trim() };
+      }
+    }
+    // OpenClaw JSON config
+    const jsonPaths = [
+      path.join(homeDir, ".openclaw/config.json"),
+      path.join(homeDir, ".openclaw/gateway.json"),
+      "/home/node/.openclaw/config.json",
+      "/home/node/.openclaw/gateway.json",
+    ];
+    for (const p of jsonPaths) {
+      if (fs.existsSync(p)) {
+        const cfg = JSON.parse(fs.readFileSync(p, "utf8"));
+        const token = cfg.gatewayToken || cfg.gateway_token || cfg.GATEWAY_TOKEN;
+        const port = cfg.httpPort || cfg.http_port || cfg.HTTP_PORT || 18789;
+        if (token) return { type: "openclaw", url: `http://127.0.0.1:${port}`, token };
       }
     }
   } catch (e) {}
 
-  // 3. Check for Claude CLI
+  // 3. Check for Docker-based frameworks (look for running containers)
   try {
-    execSync("which claude", { stdio: "pipe" });
+    const containers = execSync("docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null", { encoding: "utf8", timeout: 5000 });
+    // Look for openclaw or moltbot containers exposing a port
+    const lines = containers.split("\n").filter(Boolean);
+    for (const line of lines) {
+      const name = line.toLowerCase();
+      if (name.includes("openclaw") || name.includes("clawdbot") || name.includes("moltbot")) {
+        const portMatch = line.match(/0\.0\.0\.0:(\d+)->18789/);
+        const port = portMatch ? portMatch[1] : "18789";
+        // Try to get token from docker env
+        const containerName = line.split(" ")[0];
+        try {
+          const envOut = execSync(`docker exec ${containerName} printenv GATEWAY_TOKEN 2>/dev/null`, { encoding: "utf8", timeout: 5000 });
+          if (envOut.trim()) {
+            return { type: name.includes("openclaw") ? "openclaw" : "moltbot", url: `http://127.0.0.1:${port}`, token: envOut.trim() };
+          }
+        } catch (e2) {}
+      }
+    }
+  } catch (e) {}
+
+  // 4. Check for Claude CLI
+  try {
+    execSync("which claude", { stdio: "pipe", timeout: 3000 });
     return { type: "claude-cli" };
   } catch (e) {}
 
@@ -291,3 +329,4 @@ if (require.main === module) {
     pollLoop();
   }
 }
+
