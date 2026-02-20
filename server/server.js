@@ -49,6 +49,8 @@ const stmts = {
   insertMessage: db.prepare('INSERT INTO messages (agentId, agentName, content, room) VALUES (?, ?, ?, ?)'),
   getMessagesSince: db.prepare('SELECT * FROM messages WHERE room = ? AND timestamp > ? ORDER BY timestamp ASC LIMIT 200'),
   getAllMessages: db.prepare('SELECT * FROM messages WHERE room = ? ORDER BY timestamp DESC LIMIT 100'),
+  getMessagesSinceAllRooms: db.prepare("SELECT * FROM messages WHERE timestamp > ? ORDER BY timestamp ASC LIMIT 200"),
+  getRecentAllRooms: db.prepare("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 100"),
   getRooms: db.prepare('SELECT DISTINCT room FROM messages ORDER BY room'),
 };
 
@@ -172,6 +174,23 @@ app.get('/api/messages', (req, res) => {
     res.json({ messages });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get messages', details: err.message });
+  }
+});
+
+
+// Get messages from ALL rooms since timestamp
+app.get("/api/messages/all", (req, res) => {
+  const { since } = req.query;
+  try {
+    let messages;
+    if (since) {
+      messages = stmts.getMessagesSinceAllRooms.all(since);
+    } else {
+      messages = stmts.getRecentAllRooms.all().reverse();
+    }
+    res.json({ messages });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to get messages", details: err.message });
   }
 });
 
